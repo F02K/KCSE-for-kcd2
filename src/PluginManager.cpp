@@ -79,6 +79,16 @@ static bool SafeCallPluginLoad(KCSE::PluginLoadFn loadFn, const KCSE::IKCSEInter
     }
 }
 
+static HMODULE SafeLoadLibrary(const char* path, DWORD* pExCode)
+{
+    *pExCode = 0;
+    __try {
+        return LoadLibraryA(path);
+    } __except (*pExCode = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
 // ---- Public API ----
 
 namespace PluginManager {
@@ -237,6 +247,30 @@ void LoadAll()
         } else {
             spdlog::error("{} returned false from KCSEPlugin_Load", plugin.name);
         }
+    }
+
+    // Bare-minimum ASI support: LoadLibrary every .asi next to dinput8.dll
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    auto asiDir = fs::path(exePath).parent_path();
+    for (auto& entry : fs::directory_iterator(asiDir)) {
+        if (!entry.is_regular_file())
+            continue;
+        if (_stricmp(entry.path().extension().string().c_str(), ".asi") != 0)
+            continue;
+
+        auto path = entry.path().string();
+        auto filename = entry.path().filename().string();
+
+        DWORD exCode = 0;
+        HMODULE hAsi = SafeLoadLibrary(path.c_str(), &exCode);
+
+        if (exCode)
+            spdlog::error("{} crashed during load (exception 0x{:08X})", filename, exCode);
+        else if (hAsi)
+            spdlog::info("Loaded ASI: {}", filename);
+        else
+            spdlog::warn("Failed to load ASI {}: error {}", filename, GetLastError());
     }
 }
 
